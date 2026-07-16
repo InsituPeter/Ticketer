@@ -1,0 +1,222 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  organizer
+  buyer
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         UserRole
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  events          Event[]
+  orders          Order[]
+  refundsResolved Refund[]        @relation("ResolvedBy")
+  resaleListings  ResaleListing[]
+  transfersFrom   Transfer[]      @relation("FromUser")
+  transfersTo     Transfer[]      @relation("ToUser")
+  notifications   Notification[]
+
+  @@map("users")
+}
+
+enum EventStatus {
+  active
+  cancelled
+  completed
+}
+
+model Event {
+  id          String      @id @default(uuid()) @db.Uuid
+  organizerId String      @map("organizer_id") @db.Uuid
+  name        String
+  venue       String
+  startsAt    DateTime    @map("starts_at") @db.Timestamptz
+  status      EventStatus @default(active)
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  organizer User   @relation(fields: [organizerId], references: [id])
+  seats     Seat[]
+  orders    Order[]
+
+  @@map("events")
+}
+
+enum SeatStatus {
+  open
+  held
+  sold
+  reserved
+}
+
+model Seat {
+  id      String     @id @default(uuid()) @db.Uuid
+  eventId String     @map("event_id") @db.Uuid
+  label   String
+  price   Decimal    @db.Decimal(10, 2)
+  status  SeatStatus @default(open)
+  version Int        @default(1)
+
+  event         Event           @relation(fields: [eventId], references: [id])
+  resaleListing ResaleListing?
+  transfers     Transfer[]
+
+  @@unique([eventId, label])
+  @@index([eventId])
+  @@map("seats")
+}
+
+enum OrderStatus {
+  held
+  pending_payment
+  paid
+  failed
+  expired
+  refund_pending
+  refunded
+  resold
+  transferred
+}
+
+model Order {
+  id                String      @id @default(uuid()) @db.Uuid
+  userId            String      @map("user_id") @db.Uuid
+  eventId           String      @map("event_id") @db.Uuid
+  seatIds           String[]    @map("seat_ids")
+  total             Decimal     @db.Decimal(10, 2)
+  status            OrderStatus
+  idempotencyKey    String?     @unique @map("idempotency_key")
+  paystackReference String?     @map("paystack_reference")
+  createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime    @updatedAt @map("updated_at") @db.Timestamptz
+
+  user           User            @relation(fields: [userId], references: [id])
+  event          Event           @relation(fields: [eventId], references: [id])
+  refunds        Refund[]
+  resaleListings ResaleListing[]
+
+  @@index([userId])
+  @@index([eventId])
+  @@index([status])
+  @@map("orders")
+}
+
+enum RefundStatus {
+  pending
+  approved
+  rejected
+  processed
+  failed
+}
+
+model Refund {
+  id             String       @id @default(uuid()) @db.Uuid
+  orderId        String       @map("order_id") @db.Uuid
+  seatIds        String[]     @map("seat_ids")
+  amount         Decimal      @db.Decimal(10, 2)
+  status         RefundStatus
+  autoOrOverride String       @default("override") @map("auto_or_override")
+  reason         String?
+  requestedAt    DateTime     @default(now()) @map("requested_at") @db.Timestamptz
+  resolvedAt     DateTime?    @map("resolved_at") @db.Timestamptz
+  resolvedBy     String?      @map("resolved_by") @db.Uuid
+  idempotencyKey String?      @unique @map("idempotency_key")
+
+  order          Order  @relation(fields: [orderId], references: [id])
+  resolvedByUser User?  @relation("ResolvedBy", fields: [resolvedBy], references: [id])
+
+  @@index([orderId])
+  @@index([status])
+  @@map("refunds")
+}
+
+enum ResaleStatus {
+  active
+  sold
+  cancelled
+}
+
+model ResaleListing {
+  id         String       @id @default(uuid()) @db.Uuid
+  seatId     String       @unique @map("seat_id") @db.Uuid
+  orderId    String       @map("order_id") @db.Uuid
+  sellerId   String       @map("seller_id") @db.Uuid
+  faceValue  Decimal      @map("face_value") @db.Decimal(10, 2)
+  serviceFee Decimal      @map("service_fee") @db.Decimal(10, 2)
+  listPrice  Decimal      @map("list_price") @db.Decimal(10, 2)
+  status     ResaleStatus @default(active)
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  seat   Seat  @relation(fields: [seatId], references: [id])
+  order  Order @relation(fields: [orderId], references: [id])
+  seller User  @relation(fields: [sellerId], references: [id])
+
+  @@map("resale_listings")
+}
+
+enum TransferStatus {
+  pending
+  completed
+  cancelled
+}
+
+model Transfer {
+  id               String         @id @default(uuid()) @db.Uuid
+  seatId           String         @map("seat_id") @db.Uuid
+  orderId          String         @map("order_id") @db.Uuid
+  fromUserId       String         @map("from_user_id") @db.Uuid
+  toUserId         String         @map("to_user_id") @db.Uuid
+  fee              Decimal        @db.Decimal(10, 2)
+  status           TransferStatus
+  paystackReference String?       @map("paystack_reference")
+  idempotencyKey   String?        @unique @map("idempotency_key")
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  seat     Seat @relation(fields: [seatId], references: [id])
+  fromUser User @relation("FromUser", fields: [fromUserId], references: [id])
+  toUser   User @relation("ToUser", fields: [toUserId], references: [id])
+
+  @@map("transfers")
+}
+
+enum NotificationType {
+  payment_confirmed
+  refund_approved
+  refund_rejected
+  refund_auto_approved
+  resale_sold
+  resale_listing_cancelled
+  transfer_initiated
+  transfer_completed
+  transfer_received
+}
+
+enum NotificationStatus {
+  pending
+  sent
+  failed
+}
+
+model Notification {
+  id        String             @id @default(uuid()) @db.Uuid
+  userId    String             @map("user_id") @db.Uuid
+  type      NotificationType
+  channel   String             @default("email")
+  status    NotificationStatus @default(pending)
+  payload   Json?
+  createdAt DateTime           @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("notifications")
+}
