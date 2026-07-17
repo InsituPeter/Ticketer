@@ -1,7 +1,6 @@
 import express from 'express'
 import helmet from 'helmet'
 import cors from 'cors'
-import {config} from './config'
 import {errorHandler} from './middleware/errorHandler'
 
 export function createApp(){
